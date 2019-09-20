@@ -41,7 +41,8 @@ if __name__ == "__main__":
     R = 1
     Q = 10E-6
     rs = np.linspace(0,5,1000)
-
+    
+    print("Integrating... (this might take a while, I promise it won't crash.)")
     # Very pythonian way of avoiding the singularities...
     Emine = []
     for r in rs:
