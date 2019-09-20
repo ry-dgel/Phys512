@@ -55,9 +55,10 @@ if __name__ == "__main__":
     Escip = [sphere_scip(Q,R,r) for r in rs]
     
     # Plot the stuff
-    plt.plot(rs,Emine)
-    plt.plot(rs,Escip,linestyle='--')
+    plt.plot(rs,Emine,label="My Integrator")
+    plt.plot(rs,Escip,linestyle='--', label="Scipy.quad")
     plt.xlabel("Distance from center of sphere")
     plt.ylabel("Electric field amplitude")
+    plt.legend()
     # Wait until plot closes to quit
     plt.show(block=True)
