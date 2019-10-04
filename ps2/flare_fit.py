@@ -28,8 +28,6 @@ time = time[time >= t0]
 flux = flux[time <= 1707.2]
 time = time[time <= 1707.2]
 
-
-
 func = lambda t, p: exp_decay(t,p,t0)
 guess = np.array([1.0, 0.26, 0.05])
 init, _ = func(time, guess)
@@ -55,10 +53,16 @@ for i in range(max_iters):
 
     if old_chi2 - chi2 < delta_chi:
         print("Converged!")
+        print("With parameters: %s," % p)
+        print("Iteration %d gives chi2 of %f\n" % (i, chi2))
         break
     if i == max_iters - 1:
         print("Didn't Converge!")
     old_chi2 = chi2
+
+error_fit = error * np.sqrt(np.diag(np.linalg.inv(grad.transpose() * grad)))
+print("Errors on fit: %s." % error_fit)
+print("Estimated data error: %f." % error)
 
 plt.figure(dpi=255)
 plt.scatter(time,flux, label="data", marker="x")
