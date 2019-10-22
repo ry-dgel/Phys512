@@ -2,7 +2,6 @@ import numpy as np
 import camb
 from matplotlib import pyplot as plt
 plt.style.use("ggplot")
-
 def get_spectrum(pars,lmax=2000):
     H0=pars[0]
     ombh2=pars[1]
