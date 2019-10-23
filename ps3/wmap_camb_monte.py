@@ -16,7 +16,7 @@ ds = list(zip([0,1,2,4,5], np.array([65,0.02,0.1,2e-9,0.96])/200))
 # Data #
 ########
 wmap=np.loadtxt('wmap_tt_spectrum_9yr_v5.txt')
-ls = wmap[:,-1]
+ls = wmap[:,0]
 
 #############
 # Functions #
@@ -76,13 +76,15 @@ def chisqr(true,fit,error):
 # Levenberg-Marquardt #
 #######################
 def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
+    # Produce initial guess data, and print output
     p = guess
     model = f(x,p)
     chisq = chisqr(y, model, err)
 
     print("Initial guess: %s" % p)
     print("Gives 𝛘² = %.3f" % chisqr(y, model, err))
-
+    
+    # Initialize end conditions and L-M lambda factor
     lmfac = 0.001
     done = False
     small = False
@@ -94,48 +96,63 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
 
         # Perform next step
         increase = True
+        # If lambda was increased
         while increase:
             print("Lambda set to: %.3f" % lmfac)
+
+            # Usual L-M Step
             grad = np.matrix(g(x,p))
             r = np.matrix(resid(y, model)).transpose()
-
+            # This is where the magic happens
             lhs = grad.transpose() * grad + lmfac * np.eye(grad.shape[1])
             rhs = grad.transpose() * r
             dp  = np.linalg.inv(lhs) * rhs
-            dp  = np.squeeze(np.asarray(dp))
+            dp  = np.squeeze(np.asarray(dp)) # Squeeze as array to get back 1D array
 
             # Levenberg-Marquard lambda factor update
-            t_model = f(x, p + dp)
+            t_model = f(x, p + dp) # Test Model with new parameters
             t_chisq = chisqr(y, t_model, err)
+            # If chisq got worse, increase lambda, else decrease it
             if t_chisq >= chisq:
                 lmfac *= 10
             else:
                 lmfac *= 0.1
                 increase = False
+                # If the decrease was really small flag for end
                 if chisq - t_chisq < rel_tol:
+                    # If decrease was small twice, consider converged
                     if small:
                         done = True
+                    # Otherwise, indicate that it was small once
                     else:
                         small = True
-
+                # Otherwise, reset small flag
+                else:
+                    small = False
+        
+        # Update parameters and model
         p += dp
         model = t_model
         chisq = t_chisq
         print("Parameters: %s" % p)
         print("Gives 𝛘² = %.3f" % chisq)
 
-    grad = np.matrix(g(x,p))
-    cov = grad.transpose() * grad
 
-    return p, chisq, cov
+    return p, chisq
 
+# Define functions of fixed tau and guess parameters
 func = lambda x, p: get_spectrum(x, np.insert(p,3,0.05))
 grad = lambda x, p: get_grad(x, np.insert(p,3,0.05), ds)
 guess = np.asarray([65,0.02,0.1,2e-9,0.96])
-p, chisq = lev_mar(func, grad, wmap[:,0], wmap[:,1], wmap[:,2], guess)
 
-lmfac = 0
-cov = np.cov()
+# Do the fitting
+p, chisq = lev_mar(func, grad, ls, wmap[:,1], wmap[:,2], guess)
+
+# Compute covarient matrix from final results
+p = np.insert(p,3,0.05)
+full_ds = zip([0,1,2,3,4,5], p/200)
+grad = np.matrix(get_grad(ls,p,full_ds))
+cov = grad.transpose() * grad
 ########
 # MCMC #
 ########
