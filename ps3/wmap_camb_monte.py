@@ -2,6 +2,7 @@ import numpy as np
 import camb
 from matplotlib import pyplot as plt
 from datetime import datetime
+import sys
 plt.style.use("ggplot")
 
 ##########
@@ -9,7 +10,7 @@ plt.style.use("ggplot")
 ##########
 nstep = 10000
 params=np.asarray([65,0.02,0.1,0.05,2e-9,0.96])
-ds = params/200
+ds = list(zip([0,1,2,4,5], np.array([65,0.02,0.1,2e-9,0.96])/200))
 
 ########
 # Data #
@@ -47,61 +48,94 @@ def get_spectrum(ls,pars):
     return tt[ls.astype(int)]
 
 def get_grad(ls, pars, ds):
-    grad = np.zeros((len(pars), len(ls)))
-    
-    for pair in ds:
-        i = pair[0]
+    grad = np.zeros((len(ls),len(ds)))
+
+    for i,pair in enumerate(ds):
+        idx = pair[0]
         d = pair[1]
 
         delta = np.zeros(len(pars))
-        delta[i] = d
+        delta[idx] = d
 
         plus = get_spectrum(ls, pars + delta)
         mins = get_spectrum(ls, pars - delta)
-        grad[i,:] = (plus - mins)/(2 * d)
+        grad[:,i] = (plus - mins)/(2 * d)
 
     return grad
 
-def resid(wmap, cmb):
-    return wmap[:,1] - cmb
+def resid(true, fit):
+    return true - fit
 
-def studentized(wmap, cmb):
-    return resid(wmap,cmb)/wmap[:,2]
+def studentized(true, fit, error):
+    return resid(true,fit)/error
 
-def chisqr(wmap, cmb):
-    return np.sum(np.square(studentized(wmap,cmb)))
+def chisqr(true,fit,error):
+    return np.sum(np.square(studentized(true,fit,error)))
 
 #######################
 # Levenberg-Marquardt #
 #######################
-def lev_mar(f, x, y, err, guess, max_iter=100, rel_tol=1E-6):
+def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
     p = guess
-    old_chi = np.inf
+    model = f(x,p)
+    chisq = chisqr(y, model, err)
+
+    print("Initial guess: %s" % p)
+    print("Gives 𝛘² = %.3f" % chisqr(y, model, err))
+
+    lmfac = 0.001
+    done = False
+    small = False
+
     for i in range(max_iter):
-        model,grad = f(x,p)
-        r = resid(x, model)
-        chisq = np.sum(np.square(r/err))
-        print("Chi Sqr = %f" % chisq)
-        print("With params = %s" % p)
-        if old_chi - chisq < rel_tol:
+        # Check end condition
+        if done:
             break
-        lhs = grad.tranpose() @ grad
-        rhs = grad.tranpose() @ r
-        dp = np.linalg.inv(lhs) @ rhs
+
+        # Perform next step
+        increase = True
+        while increase:
+            print("Lambda set to: %.3f" % lmfac)
+            grad = np.matrix(g(x,p))
+            r = np.matrix(resid(y, model)).transpose()
+
+            lhs = grad.transpose() * grad + lmfac * np.eye(grad.shape[1])
+            rhs = grad.transpose() * r
+            dp  = np.linalg.inv(lhs) * rhs
+            dp  = np.squeeze(np.asarray(dp))
+
+            # Levenberg-Marquard lambda factor update
+            t_model = f(x, p + dp)
+            t_chisq = chisqr(y, t_model, err)
+            if t_chisq >= chisq:
+                lmfac *= 10
+            else:
+                lmfac *= 0.1
+                increase = False
+                if chisq - t_chisq < rel_tol:
+                    if small:
+                        done = True
+                    else:
+                        small = True
+
         p += dp
-        old_chi = chisq
+        model = t_model
+        chisq = t_chisq
+        print("Parameters: %s" % p)
+        print("Gives 𝛘² = %.3f" % chisq)
 
-    
-p = params
-cmb = get_spectrum(ls, p)
-grad = get_grad(ls, p, ds)
-r = resid(wmap, cmb).transpose()
+    grad = np.matrix(g(x,p))
+    cov = grad.transpose() * grad
 
-lhs = grad.transpose() @ grad
-rhs = grad.transpose() @ r
-dp = np.linalg.inv(lhs) * rhs
-p += dp
+    return p, chisq, cov
 
+func = lambda x, p: get_spectrum(x, np.insert(p,3,0.05))
+grad = lambda x, p: get_grad(x, np.insert(p,3,0.05), ds)
+guess = np.asarray([65,0.02,0.1,2e-9,0.96])
+p, chisq = lev_mar(func, grad, wmap[:,0], wmap[:,1], wmap[:,2], guess)
+
+lmfac = 0
+cov = np.cov()
 ########
 # MCMC #
 ########
@@ -123,8 +157,8 @@ def plot_dat(ax, x, y, e):
 def plot_func(ax, x, f, label=""):
     ax.plot(x,f, zorder=1000, label=label)
 
-
-
+"""
+cmb = get_spectrum(ls, params)
 chains = np.zeros([nstep, len(params)])
 chisqvec = np.zeros(nstep)
 stud_res = studentized(wmap, cmb)
@@ -137,11 +171,11 @@ with open("chain" + datetime.now().strftime("%d-%H-%M-%S"),"w") as f:
     f.write("H0,ombh2,omch2,tau,As,ns,chisq\n")
     write(f, params, chisq)
     for i in range(nstep):
-        n_params = params + dum_step(params) * scale_factor
+        n_params = params + cov_step(cov)
         while n_params[3] <= 0:
-            n_params = params + dum_step(params) * scale_factor
+            n_params = params + cov_step(cov)
         n_cmb = get_spectrum(ls, n_params)
-        
+
         stud_res = studentized(wmap, n_cmb)
         n_chisq = chisqr(wmap,n_cmb)
 
@@ -153,7 +187,7 @@ with open("chain" + datetime.now().strftime("%d-%H-%M-%S"),"w") as f:
             chisq = n_chisq
         chains[i,:] = params
         chisqvec[i] = chisq
-        
+
         write(f, params, chisq)
         print(i,end="\r")
 
@@ -177,3 +211,4 @@ plt.plot(chains[:,3])
 plt.plot(chains[:,4])
 plt.plot(chains[:,5])
 plt.show(block=True)
+"""
