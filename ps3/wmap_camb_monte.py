@@ -10,7 +10,7 @@ plt.style.use("ggplot")
 ##########
 nstep = 10000
 params=np.asarray([65,0.02,0.1,0.05,2e-9,0.96])
-ds = list(zip([0,1,2,4,5], np.array([65,0.02,0.1,2e-9,0.96])/200))
+
 
 ########
 # Data #
@@ -72,6 +72,20 @@ def studentized(true, fit, error):
 def chisqr(true,fit,error):
     return np.sum(np.square(studentized(true,fit,error)))
 
+# Determine optimal ds size by scaling and plotting
+# 70 Seems like a decent scaling for the ds
+"""
+steps = 10
+means = np.zeros((steps,1))
+for i, scale in enumerate(np.linspace(5,200,steps)):
+    ds = list(zip([2], np.array([0.1])/scale))
+    grad = get_grad(ls, params, ds)
+    print(grad[:,0])
+    plt.plot(grad[:,0], label=str(scale))
+plt.legend()
+plt.show(block=True)
+"""
+
 #######################
 # Levenberg-Marquardt #
 #######################
@@ -98,16 +112,17 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
         increase = True
         # If lambda was increased
         while increase:
-            print("Lambda set to: %.3f" % lmfac)
+            print("Lambda set to: %e" % lmfac)
 
             # Usual L-M Step
             grad = np.matrix(g(x,p))
             r = np.matrix(resid(y, model)).transpose()
             # This is where the magic happens
-            lhs = grad.transpose() * grad + lmfac * np.eye(grad.shape[1])
-            rhs = grad.transpose() * r
+            lhs = grad.transpose() * np.diag(1.0/err) * grad + lmfac * np.eye(grad.shape[1])
+            rhs = grad.transpose() * np.diag(1.0/err) * r
             dp  = np.linalg.inv(lhs) * rhs
             dp  = np.squeeze(np.asarray(dp)) # Squeeze as array to get back 1D array
+            print("Δparams: %s" % dp)
 
             # Levenberg-Marquard lambda factor update
             t_model = f(x, p + dp) # Test Model with new parameters
@@ -123,6 +138,7 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
                     # If decrease was small twice, consider converged
                     if small:
                         done = True
+                        print("Converged!")
                     # Otherwise, indicate that it was small once
                     else:
                         small = True
@@ -142,6 +158,7 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
 
 # Define functions of fixed tau and guess parameters
 func = lambda x, p: get_spectrum(x, np.insert(p,3,0.05))
+ds = list(zip([0,1,2,4,5], np.array([65,0.02,0.1,2e-9,0.96])/70))
 grad = lambda x, p: get_grad(x, np.insert(p,3,0.05), ds)
 guess = np.asarray([65,0.02,0.1,2e-9,0.96])
 
@@ -150,9 +167,14 @@ p, chisq = lev_mar(func, grad, ls, wmap[:,1], wmap[:,2], guess)
 
 # Compute covarient matrix from final results
 p = np.insert(p,3,0.05)
-full_ds = zip([0,1,2,3,4,5], p/200)
+full_ds = list(zip([0,1,2,3,4,5], p/200))
 grad = np.matrix(get_grad(ls,p,full_ds))
 cov = grad.transpose() * grad
+
+# Results:
+# p = [6.33538553e+01 2.20787489e-02 1.21693406e-01 2.07997193e-09 9.50629016e-01]
+# chisqr = 1245.390
+
 ########
 # MCMC #
 ########
