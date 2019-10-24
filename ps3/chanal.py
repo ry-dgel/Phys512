@@ -8,6 +8,10 @@ data = np.genfromtxt(argv[1], skip_header=1, delimiter=',')
 
 chisq = data[:,6]
 chains = data[:,:6]
+for i in range(chains.shape[1]):
+    plt.plot(chains[:,i])
+    plt.show(block=True)
+
 print(chains)
 fft = np.abs(np.fft.rfft(chains, axis=0))
 print(fft.shape,chains.shape)

@@ -86,6 +86,19 @@ plt.legend()
 plt.show(block=True)
 """
 
+############
+# Plotting #
+############
+
+def plot_res(ax, x, stud_res):
+    ax.errorbar(x, stud_res, 1, fmt='o', markersize=3)
+
+def plot_dat(ax, x, y, e):
+    ax.errorbar(x,y,e, fmt='o', markersize=3)
+
+def plot_func(ax, x, f, label=""):
+    ax.plot(x,f, zorder=1000, label=label)
+
 #######################
 # Levenberg-Marquardt #
 #######################
@@ -96,7 +109,7 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
     chisq = chisqr(y, model, err)
 
     print("Initial guess: %s" % p)
-    print("Gives 𝛘² = %.3f" % chisqr(y, model, err))
+    print("Gives 𝛘² = %.3f\n" % chisqr(y, model, err))
     
     # Initialize end conditions and L-M lambda factor
     lmfac = 0.001
@@ -122,7 +135,6 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
             rhs = grad.transpose() * np.diag(1.0/err) * r
             dp  = np.linalg.inv(lhs) * rhs
             dp  = np.squeeze(np.asarray(dp)) # Squeeze as array to get back 1D array
-            print("Δparams: %s" % dp)
 
             # Levenberg-Marquard lambda factor update
             t_model = f(x, p + dp) # Test Model with new parameters
@@ -150,8 +162,10 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
         p += dp
         model = t_model
         chisq = t_chisq
+
+        print("Δparams: %s" % dp)
         print("Parameters: %s" % p)
-        print("Gives 𝛘² = %.3f" % chisq)
+        print("Gives 𝛘² = %.3f\n" % chisq)
 
 
     return p, chisq
@@ -162,18 +176,33 @@ ds = list(zip([0,1,2,4,5], np.array([65,0.02,0.1,2e-9,0.96])/70))
 grad = lambda x, p: get_grad(x, np.insert(p,3,0.05), ds)
 guess = np.asarray([65,0.02,0.1,2e-9,0.96])
 
+"""
 # Do the fitting
 p, chisq = lev_mar(func, grad, ls, wmap[:,1], wmap[:,2], guess)
+# Plot Results
+fig, ax = plt.subplots(2,1, sharex=True)
+res_ax = ax[0]
+dat_ax = ax[1]
+
+model = get_spectrum(ls, p)
+stud_res = studentized(wmap[:,1], model, wmap[:,2])
+plot_res(res_ax, wmap[:,0], stud_res)
+plot_dat(dat_ax, wmap[:,0], wmap[:,1], wmap[:,2])
+plot_func(dat_ax, ls, model, label="fit")
+dat_ax.legend()
+plt.show(block = True)
+"""
+# Results:
+p = np.array([6.78469876e+01,2.24729017e-02,1.16412208e-01,2.06071465e-09,9.68546319e-01])
+# chisqr = 1228.904
 
 # Compute covarient matrix from final results
 p = np.insert(p,3,0.05)
-full_ds = list(zip([0,1,2,3,4,5], p/200))
+full_ds = list(zip([0,1,2,3,4,5], p/70))
 grad = np.matrix(get_grad(ls,p,full_ds))
-cov = grad.transpose() * grad
 
-# Results:
-# p = [6.33538553e+01 2.20787489e-02 1.21693406e-01 2.07997193e-09 9.50629016e-01]
-# chisqr = 1245.390
+print("Calculating Covar")
+cov = np.linalg.inv(grad.transpose() * np.diag(1.0/wmap[:,2]) * grad)
 
 ########
 # MCMC #
@@ -181,43 +210,29 @@ cov = grad.transpose() * grad
 
 def cov_step(covmat):
     chol = np.linalg.cholesky(covmat)
-    return chol @ np.random.randn(covmat.shape[0])
+    step = np.squeeze(np.asarray(chol @ np.random.randn(chol.shape[0])))
+    return step
 
-############
-# Plotting #
-############
-
-def plot_res(ax, x, stud_res):
-    ax.errorbar(x, stud_res, 1, fmt='o', markersize=3)
-
-def plot_dat(ax, x, y, e):
-    ax.errorbar(x,y,e, fmt='o', markersize=3)
-
-def plot_func(ax, x, f, label=""):
-    ax.plot(x,f, zorder=1000, label=label)
-
-"""
 cmb = get_spectrum(ls, params)
 chains = np.zeros([nstep, len(params)])
 chisqvec = np.zeros(nstep)
-stud_res = studentized(wmap, cmb)
-chisq = chisqr(wmap,cmb)
+chisq = chisqr(wmap[:,1], cmb, wmap[:,2])
 
 init_params = params
 init_guess = cmb
 
+print("Starting MCMC")
 with open("chain" + datetime.now().strftime("%d-%H-%M-%S"),"w") as f:
     f.write("H0,ombh2,omch2,tau,As,ns,chisq\n")
     write(f, params, chisq)
     for i in range(nstep):
-        n_params = params + cov_step(cov)
+        n_params = params + cov_step(cov) * 1.5
         while n_params[3] <= 0:
-            n_params = params + cov_step(cov)
+            n_params = params + cov_step(cov) * 1.5
+
         n_cmb = get_spectrum(ls, n_params)
-
-        stud_res = studentized(wmap, n_cmb)
-        n_chisq = chisqr(wmap,n_cmb)
-
+        n_chisq = chisqr(wmap[:,1],n_cmb,wmap[:,2])
+        print(n_params)
         delta = n_chisq - chisq
         prob = np.exp(-0.5 * delta)
         if np.random.rand(1) < prob:
@@ -234,7 +249,7 @@ fig, ax = plt.subplots(2,1, sharex=True)
 res_ax = ax[0]
 dat_ax = ax[1]
 
-plot_res(res_ax, wmap[:,0], stud_res)
+plot_res(res_ax, wmap[:,0], studentized(wmap[:,1], cmb, wmap[:,2]))
 plot_dat(dat_ax, wmap[:,0], wmap[:,1], wmap[:,2])
 plot_func(dat_ax, ls, init_guess, label="Guess")
 plot_func(dat_ax, ls, cmb, label="fit")
@@ -250,4 +265,3 @@ plt.plot(chains[:,3])
 plt.plot(chains[:,4])
 plt.plot(chains[:,5])
 plt.show(block=True)
-"""
