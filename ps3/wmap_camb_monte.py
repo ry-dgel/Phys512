@@ -8,7 +8,7 @@ plt.style.use("ggplot")
 ##########
 # Params #
 ##########
-nstep = 10000
+nstep = 8000
 params=np.asarray([65,0.02,0.1,0.05,2e-9,0.96])
 
 
@@ -21,10 +21,11 @@ ls = wmap[:,0]
 #############
 # Functions #
 #############
-def write(f, params, chisq):
+def write(f, params, chisq, accept):
     for param in params:
         f.write("%e," % param)
-    f.write("%f\n" % chisq)
+    f.write("%f," % chisq)
+    f.write("%.2f\n" % accept)
     f.flush()
 
 def get_spectrum(ls,pars):
@@ -220,29 +221,34 @@ chisq = chisqr(wmap[:,1], cmb, wmap[:,2])
 
 init_params = params
 init_guess = cmb
-
+accept = 0
+scale = 7
 print("Starting MCMC")
 with open("chain" + datetime.now().strftime("%d-%H-%M-%S"),"w") as f:
-    f.write("H0,ombh2,omch2,tau,As,ns,chisq\n")
-    write(f, params, chisq)
+    f.write("H0,ombh2,omch2,tau,As,ns,chisq,accept\n")
+    write(f, params, chisq, 100.0)
     for i in range(nstep):
-        n_params = params + cov_step(cov) * 1.5
+        n_params = params + cov_step(cov) * scale
         while n_params[3] <= 0:
-            n_params = params + cov_step(cov) * 1.5
+            n_params = params + cov_step(cov) * scale
 
         n_cmb = get_spectrum(ls, n_params)
         n_chisq = chisqr(wmap[:,1],n_cmb,wmap[:,2])
-        print(n_params)
         delta = n_chisq - chisq
         prob = np.exp(-0.5 * delta)
         if np.random.rand(1) < prob:
             params = n_params
             cmb = n_cmb
             chisq = n_chisq
+            accept += 1
+        for param in params:
+            print("%.2e, " % param, end="")
+        print("%.2f " % chisq, end="")
+        print("%.2f %%" % (accept/(i+1) * 100))
         chains[i,:] = params
         chisqvec[i] = chisq
 
-        write(f, params, chisq)
+        write(f, params, chisq, accept/(i+1) * 100)
         print(i,end="\r")
 
 fig, ax = plt.subplots(2,1, sharex=True)
