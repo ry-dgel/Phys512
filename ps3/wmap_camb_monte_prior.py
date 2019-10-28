@@ -134,8 +134,8 @@ def lev_mar(f,g, x, y, err, guess, max_iter=100, rel_tol=1E-3):
             grad = np.matrix(g(x,p))
             r = np.matrix(resid(y, model)).transpose()
             # This is where the magic happens
-            lhs = grad.transpose() * np.diag(1.0/err**2) * grad + lmfac * np.eye(grad.shape[1])
-            rhs = grad.transpose() * np.diag(1.0/err**2) * r
+            lhs = grad.transpose() * np.diag(1.0/err) * grad + lmfac * np.eye(grad.shape[1])
+            rhs = grad.transpose() * np.diag(1.0/err) * r
             dp  = np.linalg.inv(lhs) * rhs
             dp  = np.squeeze(np.asarray(dp)) # Squeeze as array to get back 1D array
 
@@ -179,6 +179,7 @@ ds = list(zip([0,1,2,4,5], np.array([65,0.02,0.1,2e-9,0.96])/70))
 grad = lambda x, p: get_grad(x, np.insert(p,3,0.05), ds)
 guess = np.asarray([65,0.02,0.1,2e-9,0.96])
 
+"""
 # Do the fitting
 p, chisq = lev_mar(func, grad, ls, wmap[:,1], wmap[:,2], guess)
 # Plot Results
@@ -186,7 +187,6 @@ fig, ax = plt.subplots(2,1, sharex=True)
 res_ax = ax[0]
 dat_ax = ax[1]
 
-p = np.insert(p,3,0.05)
 model = get_spectrum(ls, p)
 stud_res = studentized(wmap[:,1], model, wmap[:,2])
 plot_res(res_ax, wmap[:,0], stud_res)
@@ -194,25 +194,19 @@ plot_dat(dat_ax, wmap[:,0], wmap[:,1], wmap[:,2])
 plot_func(dat_ax, ls, model, label="fit")
 dat_ax.legend()
 plt.show(block = True)
-
+"""
 # Results:
-#p = np.array([6.78469876e+01,2.24729017e-02,1.16412208e-01,2.06071465e-09,9.68546319e-01])
+p = np.array([6.78469876e+01,2.24729017e-02,1.16412208e-01,2.06071465e-09,9.68546319e-01])
 # chisqr = 1228.904
 
 # Compute covarient matrix from final results
-grad_no_tau = np.matrix(get_grad(ls,p,ds))
-cov_no_tau = np.linalg.inv(grad_no_tau.transpose() * np.diag(1.0/wmap[:,2]**2) * grad_no_tau)
-print("~~~LM Fit Results~~~")
-print("Output Parameters:")
-print(p)
-print("Fit Errors No Tau:")
-print(np.sqrt(np.diag(cov_no_tau)))
-
+p = np.insert(p,3,0.05)
 full_ds = list(zip([0,1,2,3,4,5], p/70))
 grad = np.matrix(get_grad(ls,p,full_ds))
-cov = np.linalg.inv(grad.transpose() * np.diag(1.0/wmap[:,2]**2) * grad)
-print("Fit Errors:")
-print(np.sqrt(np.diag(cov)))
+
+print("Calculating Covar")
+cov = np.linalg.inv(grad.transpose() * np.diag(1.0/wmap[:,2]) * grad)
+del grad
 ########
 # MCMC #
 ########
@@ -229,9 +223,9 @@ def monte(params, nstep):
     chisq = chisqr(wmap[:,1], cmb, wmap[:,2])
 
     accept = 0
-    scale = 0.8
+    scale = 7
     print("Starting MCMC")
-    path = "chain" + datetime.now().strftime("%d-%H-%M-%S")
+    path = "prior_chain" + datetime.now().strftime("%d-%H-%M-%S")
     with open(path,"w+") as f:
         f.write("H0,ombh2,omch2,tau,As,ns,chisq,accept\n")
     write(path, params, chisq, 100.0)
@@ -241,7 +235,8 @@ def monte(params, nstep):
         while n_params[3] <= 0:
             n_params = params + cov_step(cov) * scale
 
-        n_chisq = chisqr(wmap[:,1],get_spectrum(ls, n_params),wmap[:,2])
+        n_chisq = (chisqr(wmap[:,1],get_spectrum(ls, n_params),wmap[:,2]) + 
+                   ((n_params[3] - 0.0544)/(0.0073))**2)
         delta = n_chisq - chisq
         prob = np.exp(-0.5 * delta)
         if np.random.rand(1) < prob:
