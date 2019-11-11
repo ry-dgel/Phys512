@@ -90,6 +90,9 @@ l_spect = np.mean(np.vstack(l_spect),axis=0)
 plt.figure()
 for n in [1,3,5,10,15,20,30]:
     plt.loglog(np.sqrt(moving_average(h_spect,n)))
+plt.title("Comparing Averages")
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("Noise PSD (m^2/Hz)")
 plt.show(block=True)
 
 # 5 looks pretty good as it avoids flat tops of peaks but also
@@ -103,6 +106,9 @@ l_itp = intp.interp1d(freq, l_spect)
 plt.figure()
 plt.loglog(freq, np.sqrt(h_spect), label="Hanford")
 plt.loglog(freq, np.sqrt(l_spect), label="Livingston")
+plt.title("Ligo Noise ASD")
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("Noise ASD (m/Sqrt(Hz))")
 plt.legend()
 plt.axis([20, 2000, 1e-24, 1e-19])
 plt.show(block=True)
@@ -142,22 +148,24 @@ def match_filter(strain, template, noise, dt):
     # weight is stored.
     int = intg.cumtrapz(np.abs(optimal), dx=df, initial=0)
     mid_idx = np.argmin(np.abs(int - max(int)/2))
-    print("\t %f Hz is equal weight point" % freq[mid_idx])
     # Inverse fourier transform and scale to go back to time.
     optimal_time = 2 * np.fft.ifft(optimal) / dt
 
     # Match filter against template for noise estimates
     sig_opt = temp_spect * temp_spect.conjugate() / noise_itp
-    sig_opt_time = 2 * np.fft.ifft(optimal) / dt
+    
+    # Scatter in signal.
+    sigma_data = np.std(np.abs(optimal_time))
+    max_data = np.max(np.abs(optimal_time))
+    SNR_data = (max_data-np.mean(np.abs(optimal_time)))/sigma_data
 
     # Calculate sigma for getting signal to noise.
     sigmasq = np.sum(sig_opt) * df
     sigma = np.sqrt(np.abs(sigmasq))
     print("\tSigma = ",sigma)
 
-    SNR_expct = max(np.abs(sig_opt_time)) / sigma
     SNR = optimal_time / sigma
-    return SNR, SNR_expct, freq[mid_idx]
+    return SNR, SNR_data, freq[mid_idx]
 
 
 # Loop through each dataset to find events
@@ -181,11 +189,11 @@ for event in json_data.keys():
         t_p,t_c=read_template(template_name)
         temp = (t_p + t_c * 1.0j)
 
-        SNR_h, SNR_expct_h, mid_freq_h = match_filter(strain_h, np.copy(temp),
+        SNR_h, SNR_data_h, mid_freq_h = match_filter(strain_h, np.copy(temp),
                                                       h_itp, dt_h)
         SNR_h = np.fft.fftshift(SNR_h)
 
-        SNR_l, SNR_expct_l, mid_freq_l = match_filter(strain_l, np.copy(temp),
+        SNR_l, SNR_data_l, mid_freq_l = match_filter(strain_l, np.copy(temp),
                                                       l_itp, dt_l)
         SNR_l = np.fft.fftshift(SNR_l)
 
@@ -212,8 +220,8 @@ for event in json_data.keys():
             # Calc sigma from fwhm
             sigma_h = fwhm_h/2.355
             sigma_l = fwhm_l/2.355
-            SNR_ex_max_h = SNR_expct_h
-            SNR_ex_max_l = SNR_expct_l
+            SNR_ex_max_h = SNR_data_h
+            SNR_ex_max_l = SNR_data_l
             freq_max_h = mid_freq_h
             freq_max_l = mid_freq_l
             max_name = template_name
@@ -234,7 +242,7 @@ for event in json_data.keys():
         # Plot the Matched Filter SNR output
         ax[idx,0].plot(np.arange(len(SNR_h)) * dt_h,np.abs(SNR_h), label="H")
         ax[idx,0].plot(np.arange(len(SNR_l)) * dt_l,np.abs(SNR_l), label="L")
-        ax[idx,0].set_ylabel(event_json["name"])
+        ax[idx,0].set_ylabel(template_name.split("/")[2].split("_")[0])
 
         # Only plot +/- 0.1 seconds around the detected event
         offset = int(round(0.1/dt))

@@ -1,0 +1,96 @@
+reading event GW150914
+
+	Trying template  ./data/GW151226_4_template.hdf5
+	Sigma =  6037.137255252749
+	Sigma =  5479.430304228579
+
+	Trying template  ./data/GW170104_4_template.hdf5
+	Sigma =  12001.969936164054
+	Sigma =  10947.751923259773
+
+	Trying template  ./data/LVT151012_4_template.hdf5
+	Sigma =  9324.020620453985
+	Sigma =  8440.603727977721
+
+	Trying template  ./data/GW150914_4_template.hdf5
+	Sigma =  14670.88777473066
+	Sigma =  13469.48059279717
+	Best Template: ./data/GW150914_4_template.hdf5
+		Hanford:    SNR = 19.070679 @ 16.439453 +/- 0.002488 s
+			Mid Freq = 125.781250, Expected SNR = 25.385498
+		Livingston: SNR = 14.401150 @ 16.432373 +/- 0.002384 s
+			Mid Freq = 135.031250, Expected SNR = 18.058883
+
+
+reading event LVT151012
+
+	Trying template  ./data/GW151226_4_template.hdf5
+	Sigma =  6037.137255252749
+	Sigma =  5479.430304228579
+
+	Trying template  ./data/GW170104_4_template.hdf5
+	Sigma =  12001.969936164054
+	Sigma =  10947.751923259773
+
+	Trying template  ./data/LVT151012_4_template.hdf5
+	Sigma =  9324.020620453985
+	Sigma =  8440.603727977721
+
+	Trying template  ./data/GW150914_4_template.hdf5
+	Sigma =  14670.88777473066
+	Sigma =  13469.48059279717
+	Best Template: ./data/LVT151012_4_template.hdf5
+		Hanford:    SNR = 6.397463 @ 16.442139 +/- 0.439142 s
+			Mid Freq = 125.406250, Expected SNR = 7.875304
+		Livingston: SNR = 6.043383 @ 16.442627 +/- 0.433544 s
+			Mid Freq = 135.437500, Expected SNR = 7.580009
+
+
+reading event GW151226
+
+	Trying template  ./data/GW151226_4_template.hdf5
+	Sigma =  6037.137255252749
+	Sigma =  5479.430304228579
+
+	Trying template  ./data/GW170104_4_template.hdf5
+	Sigma =  12001.969936164054
+	Sigma =  10947.751923259773
+
+	Trying template  ./data/LVT151012_4_template.hdf5
+	Sigma =  9324.020620453985
+	Sigma =  8440.603727977721
+
+	Trying template  ./data/GW150914_4_template.hdf5
+	Sigma =  14670.88777473066
+	Sigma =  13469.48059279717
+	Best Template: ./data/GW151226_4_template.hdf5
+		Hanford:    SNR = 8.822995 @ 16.647705 +/- 0.000311 s
+			Mid Freq = 153.437500, Expected SNR = 12.474266
+		Livingston: SNR = 8.037937 @ 16.646484 +/- 4.062687 s
+			Mid Freq = 148.093750, Expected SNR = 8.485935
+
+
+reading event GW170104
+
+	Trying template  ./data/GW151226_4_template.hdf5
+	Sigma =  6037.137255252749
+	Sigma =  5479.430304228579
+
+	Trying template  ./data/GW170104_4_template.hdf5
+	Sigma =  12001.969936164054
+	Sigma =  10947.751923259773
+
+	Trying template  ./data/LVT151012_4_template.hdf5
+	Sigma =  9324.020620453985
+	Sigma =  8440.603727977721
+
+	Trying template  ./data/GW150914_4_template.hdf5
+	Sigma =  14670.88777473066
+	Sigma =  13469.48059279717
+	Best Template: ./data/GW170104_4_template.hdf5
+		Hanford:    SNR = 8.751718 @ 16.608398 +/- 0.000311 s
+			Mid Freq = 122.218750, Expected SNR = 10.931372
+		Livingston: SNR = 7.540800 @ 16.611328 +/- 0.002281 s
+			Mid Freq = 152.250000, Expected SNR = 12.358297
+
+
