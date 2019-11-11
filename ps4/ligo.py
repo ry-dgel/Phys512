@@ -33,9 +33,13 @@ def read_file(filename):
     dataFile.close()
     return strain,dt,utc
 
+# Apply uniform filter to average out each point with neighbours
 def moving_average(a, n=5):
     return ndimage.uniform_filter(a,n)
+
 """
+# Initial PSD attempts, works but produces jagged result that gave worse
+# results of matched filter.
 def psd(signal, dt):
     # Window Signal
     window = sig.blackman(len(signal))
@@ -49,6 +53,7 @@ def psd(signal, dt):
     return psd, freqs
 """
 
+# Take PSDs using welch's method. Produces smoother output
 def psd(signal, dt):
     nperseg = 4 * 4096
     # Take rfft
@@ -95,7 +100,7 @@ plt.xlabel("Frequency (Hz)")
 plt.ylabel("Noise PSD (m^2/Hz)")
 plt.show(block=True)
 
-# 5 looks pretty good as it avoids flat tops of peaks but also
+# 3 looks pretty good as it avoids flat tops of peaks but also
 # removes jagged spikes and a bit of noise.
 h_spect = moving_average(h_spect,3)
 l_spect = moving_average(l_spect,3)
@@ -126,7 +131,7 @@ def whiten(strain,noise,dt):
     spectr = spectr * 1.0 / np.sqrt(1.0/(dt * 2))
     white_strain = np.fft.ifft(spectr)
 
-    # apply bandpass from 20 to 2000
+    # apply bandpass from 20 to 2000 which LIGO indicates as the usable band
     bb,ba = sig.butter(5, np.array([20,2000]) * 2 * dt, btype="band")
     norm = np.sqrt((2000-20)*2*dt)
     return sig.lfilter(bb,ba,white_strain) / norm
@@ -135,9 +140,12 @@ def match_filter(strain, template, noise, dt):
     window = sig.tukey(strain.size, alpha=1./8)
     # Take the fft of the data and template
     strain_spect = np.fft.fft(strain*window) * dt
-    temp_spect   = np.fft.fft(template*window) / 4096
+    temp_spect   = np.fft.fft(template*window) * dt
+    # Get Frequencies
     freq = np.fft.fftfreq(len(window), dt)
+    # Get freq spacing
     df = freq[1]-freq[0]
+    # Get interpolated noise at each frequency
     noise_itp = noise(np.abs(freq))
 
     # Do the matched filter
@@ -154,12 +162,12 @@ def match_filter(strain, template, noise, dt):
     # Match filter against template for noise estimates
     sig_opt = temp_spect * temp_spect.conjugate() / noise_itp
     
-    # Scatter in signal.
+    # Scatter in signal for noise estimate
     sigma_data = np.std(np.abs(optimal_time))
     max_data = np.max(np.abs(optimal_time))
     SNR_data = (max_data-np.mean(np.abs(optimal_time)))/sigma_data
 
-    # Calculate sigma for getting signal to noise.
+    # Calculate sigma for getting signal to noise. Include normalization
     sigmasq = np.sum(sig_opt) * df
     sigma = np.sqrt(np.abs(sigmasq))
     print("\tSigma = ",sigma)
@@ -175,10 +183,12 @@ with open("data/BBH_events_v3.json") as json_file:
 for event in json_data.keys():
     event_json = json_data[event]
     print('reading event', event_json['name'])
-
+    
+    # Load strain data
     strain_h,dt_h,utc_h=read_file(dataFolder + "/" + event_json['fn_H1'])
     strain_l,dt_l,utc_l=read_file(dataFolder + "/" + event_json['fn_L1'])
-
+    
+    # Holding variable
     abs_max_h = 0
     abs_max_l = 0
 
@@ -186,20 +196,27 @@ for event in json_data.keys():
     # Lets pretend we don't know which template to apply
     for idx, template_name in enumerate(templates):
         print('\n\tTrying template ', template_name)
+        # Load polarizations of template
         t_p,t_c=read_template(template_name)
+        # Make complex template
         temp = (t_p + t_c * 1.0j)
-
+        
+        # Match filter Hanford
         SNR_h, SNR_data_h, mid_freq_h = match_filter(strain_h, np.copy(temp),
                                                       h_itp, dt_h)
+        # Shift output to put t=0 at start
         SNR_h = np.fft.fftshift(SNR_h)
-
+        # Match filter Livingston
         SNR_l, SNR_data_l, mid_freq_l = match_filter(strain_l, np.copy(temp),
                                                       l_itp, dt_l)
+        # Shift ouput to put t=0 at start
         SNR_l = np.fft.fftshift(SNR_l)
-
+        
+        # Find index of max SNR
         idxmax_h = np.argmax(np.abs(SNR_h))
         idxmax_l = np.argmax(np.abs(SNR_l))
-
+        
+        # Get max value of SNR
         max_h = np.max(np.abs(SNR_h))
         max_l = np.max(np.abs(SNR_l))
 
