@@ -2,6 +2,7 @@ import numpy as np
 import scipy.ndimage as ndimage
 import scipy.signal as sig
 import scipy.interpolate as intp
+import scipy.integrate as intg
 from matplotlib import pyplot as plt
 import h5py
 import glob
@@ -34,7 +35,7 @@ def read_file(filename):
 
 def moving_average(a, n=5):
     return ndimage.uniform_filter(a,n)
-
+"""
 def psd(signal, dt):
     # Window Signal
     window = sig.blackman(len(signal))
@@ -46,7 +47,13 @@ def psd(signal, dt):
     # Generate frequencies of output psd
     freqs = np.fft.rfftfreq(len(signal), dt)
     return psd, freqs
+"""
 
+def psd(signal, dt):
+    nperseg = 4 * 4096
+    # Take rfft
+    freqs, psd = sig.welch(signal, 4096, window="blackman", nperseg=nperseg)
+    return psd, freqs
 
 templates = glob.glob(dataFolder + "/*template*")
 datasets  = glob.glob(dataFolder + "/*LOSC*.hdf5")
@@ -87,8 +94,8 @@ plt.show(block=True)
 
 # 5 looks pretty good as it avoids flat tops of peaks but also
 # removes jagged spikes and a bit of noise.
-h_spect = moving_average(h_spect,5)
-l_spect = moving_average(l_spect,5)
+h_spect = moving_average(h_spect,3)
+l_spect = moving_average(l_spect,3)
 h_itp = intp.interp1d(freq, h_spect)
 l_itp = intp.interp1d(freq, l_spect)
 
@@ -111,7 +118,7 @@ def whiten(strain,noise,dt):
     spectr = spectr / np.sqrt(noise(np.abs(freq)))
     # From example code: something about normalization
     spectr = spectr * 1.0 / np.sqrt(1.0/(dt * 2))
-    white_strain = np.fft.ifft(spectr, n=len(strain))
+    white_strain = np.fft.ifft(spectr)
 
     # apply bandpass from 20 to 2000
     bb,ba = sig.butter(5, np.array([20,2000]) * 2 * dt, btype="band")
@@ -119,28 +126,38 @@ def whiten(strain,noise,dt):
     return sig.lfilter(bb,ba,white_strain) / norm
 
 def match_filter(strain, template, noise, dt):
-    window = sig.blackman(strain.size)
-
+    window = sig.tukey(strain.size, alpha=1./8)
     # Take the fft of the data and template
     strain_spect = np.fft.fft(strain*window) * dt
-    temp_spect   = np.fft.fft(template*window) * dt
+    temp_spect   = np.fft.fft(template*window) / 4096
     freq = np.fft.fftfreq(len(window), dt)
-    df = np.average(np.diff(freq))
+    df = freq[1]-freq[0]
     noise_itp = noise(np.abs(freq))
 
     # Do the matched filter
     optimal = strain_spect * temp_spect.conjugate() / noise_itp
-
+    # Integrate the filter and find point along f-axis
+    # where integral is equal to half of the total
+    # This is the frequency at below and above which half the
+    # weight is stored.
+    int = intg.cumtrapz(np.abs(optimal), dx=df, initial=0)
+    mid_idx = np.argmin(np.abs(int - max(int)/2))
+    print("\t %f Hz is equal weight point" % freq[mid_idx])
     # Inverse fourier transform and scale to go back to time.
     optimal_time = 2 * np.fft.ifft(optimal) / dt
 
-    # Calculate sigma for getting singal to noise.
-    sigmasq = np.sum(temp_spect * temp_spect.conjugate() / noise_itp) * df
-    sigma = np.sqrt(np.abs(sigmasq))
-    SNR = optimal_time / sigma
-    print("Sigma = ", sigma)
+    # Match filter against template for noise estimates
+    sig_opt = temp_spect * temp_spect.conjugate() / noise_itp
+    sig_opt_time = 2 * np.fft.ifft(optimal) / dt
 
-    return SNR
+    # Calculate sigma for getting signal to noise.
+    sigmasq = np.sum(sig_opt) * df
+    sigma = np.sqrt(np.abs(sigmasq))
+    print("\tSigma = ",sigma)
+
+    SNR_expct = max(np.abs(sig_opt_time)) / sigma
+    SNR = optimal_time / sigma
+    return SNR, SNR_expct, freq[mid_idx]
 
 
 # Loop through each dataset to find events
@@ -154,61 +171,112 @@ for event in json_data.keys():
     strain_h,dt_h,utc_h=read_file(dataFolder + "/" + event_json['fn_H1'])
     strain_l,dt_l,utc_l=read_file(dataFolder + "/" + event_json['fn_L1'])
 
-    wstrain_h = whiten(strain_h, h_itp, dt_h)
-    wstrain_l = whiten(strain_l, l_itp, dt_l)
+    abs_max_h = 0
+    abs_max_l = 0
 
-    # Lets keep things interesting and pretend we don't know which
-    # template we should use.
-    fig,ax = plt.subplots(len(templates),2)
+    fig,ax = plt.subplots(4,2)
+    # Lets pretend we don't know which template to apply
     for idx, template_name in enumerate(templates):
+        print('\n\tTrying template ', template_name)
         t_p,t_c=read_template(template_name)
-        print('\tTrying template ', template_name)
         temp = (t_p + t_c * 1.0j)
 
-        SNR_h = (match_filter(wstrain_h, temp, h_itp, dt_h))
-        SNR_l = (match_filter(wstrain_l, temp, l_itp, dt_l))
+        SNR_h, SNR_expct_h, mid_freq_h = match_filter(strain_h, np.copy(temp),
+                                                      h_itp, dt_h)
+        SNR_h = np.fft.fftshift(SNR_h)
+
+        SNR_l, SNR_expct_l, mid_freq_l = match_filter(strain_l, np.copy(temp),
+                                                      l_itp, dt_l)
+        SNR_l = np.fft.fftshift(SNR_l)
 
         idxmax_h = np.argmax(np.abs(SNR_h))
         idxmax_l = np.argmax(np.abs(SNR_l))
-        print(np.angle(SNR_h[idxmax_h]))
-        wtemp_h = np.real(whiten(temp * SNR_h[idxmax_h] / abs(SNR_h[idxmax_h]), h_itp, dt_h))
-        wtemp_l = np.real(whiten(temp * SNR_h[idxmax_l] / abs(SNR_h[idxmax_l]), l_itp, dt_h))
 
-        ax[idx,0].plot(np.abs(SNR_h), label="H")
-        ax[idx,0].plot(np.abs(SNR_l), label="L")
-        ax[idx,0].set_ylabel(template_name.split("_")[0].split("/")[2])
+        max_h = np.max(np.abs(SNR_h))
+        max_l = np.max(np.abs(SNR_l))
 
+        # Naively pull out uncertainty in timing by
+        # taking the times defining the FWHM of each SNR peak
+        # from here we can estimate the time uncertainty
+        # np.argsort gives the indices that would sort the array
+        # see the first two are the closest to max/2
+        fwhm_h = np.abs(np.diff(np.argsort(np.abs(np.abs(SNR_h) - max_h/2))[:2]))[0] * dt
+        fwhm_l = np.abs(np.diff(np.argsort(np.abs(np.abs(SNR_l) - max_l/2))[:2]))[0] * dt
 
+        # Store the information on the best template fit
+        if max_h > abs_max_h and max_l > abs_max_l:
+            abs_max_h = max_h
+            abs_max_l = max_l
+            time_h = idxmax_h * dt
+            time_l = idxmax_l * dt
+            # Calc sigma from fwhm
+            sigma_h = fwhm_h/2.355
+            sigma_l = fwhm_l/2.355
+            SNR_ex_max_h = SNR_expct_h
+            SNR_ex_max_l = SNR_expct_l
+            freq_max_h = mid_freq_h
+            freq_max_l = mid_freq_l
+            max_name = template_name
+
+        # Whiten the strain for plotting
+        wstrain_h = whiten(strain_h, h_itp, dt_h)
+        wstrain_l = whiten(strain_l, l_itp, dt_l)
+
+        # Phase shift the template based on SNR max, c/abs(c) = exp(-1j arg(c))
+        phased_h = whiten(temp * SNR_h[idxmax_h]/abs(SNR_h[idxmax_h]),
+                          h_itp, dt_h)
+        phased_l = whiten(temp * SNR_l[idxmax_l]/abs(SNR_l[idxmax_l]),
+                          l_itp, dt_h)
+        # Take the real part for plotting
+        wtemp_h = np.real(phased_h)
+        wtemp_l = np.real(phased_l)
+
+        # Plot the Matched Filter SNR output
+        ax[idx,0].plot(np.arange(len(SNR_h)) * dt_h,np.abs(SNR_h), label="H")
+        ax[idx,0].plot(np.arange(len(SNR_l)) * dt_l,np.abs(SNR_l), label="L")
+        ax[idx,0].set_ylabel(event_json["name"])
+
+        # Only plot +/- 0.1 seconds around the detected event
         offset = int(round(0.1/dt))
 
-        gwave_h = wstrain_h[idxmax_h-offset:idxmax_h+offset]
-        twave_h = wtemp_h[len(wtemp_h)//2 - offset:len(wtemp_h)//2 + offset]
-        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_h)), gwave_h/max(gwave_h)+1.0)
+        # Take the whitened strain data around the event max
+        gwave_h = np.real(wstrain_h[idxmax_h-offset:idxmax_h+offset])
+        # Take the whitened template data around its peak which is in the middle
+        twave_h = np.real(wtemp_h[len(wtemp_h)//2 - offset:
+                                  len(wtemp_h)//2 + offset])
+        # Plot the normalized whitend strain data, shifted up for H detector
+        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_h)),
+                                   gwave_h/max(gwave_h)+1.0)
 
-        gwave_l = wstrain_l[idxmax_l-offset:idxmax_l+offset]
-        twave_l = wtemp_l[len(wtemp_l)//2 - offset:len(wtemp_l)//2 + offset]
-        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_l)), gwave_l/max(gwave_l)-1.0)
+        # Take the whitened strain data around the event max
+        gwave_l = np.real(wstrain_l[idxmax_l-offset:idxmax_l+offset])
+        # Take the whitened template data around its peak which is in the middle
+        twave_l = np.real(wtemp_l[len(wtemp_l)//2 - offset:
+                                  len(wtemp_l)//2 + offset])
+        # Plot the normalized whitend strain data, shifted down for H detector
+        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_l)),
+                       gwave_l/max(gwave_l)-1.0)
 
-        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_h)), twave_h/max(twave_h)+1.0)
-        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_l)), twave_l/max(twave_l)-1.0)
-    ax[0,0].legend(loc="upper right")
+        # Overlay the normalized whitened templates, shifted for the respective
+        # detectors
+        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_h)),
+                       twave_h/max(twave_l)+1.0)
+        ax[idx,1].plot(np.linspace(-0.1,0.1,len(gwave_l)),
+                       twave_l/max(twave_l)-1.0)
+        ax[idx,1].set_xlim([-0.1,0.1])
+
+    # Print Results
+    print("\tBest Template: %s" % max_name)
+    print("\t\tHanford:    SNR = %f @ %f +/- %f s" % (abs_max_h, time_h,sigma_h))
+    print("\t\t\tMid Freq = %f, Expected SNR = %f" % (freq_max_h, SNR_ex_max_h))
+    print("\t\tLivingston: SNR = %f @ %f +/- %f s" % (abs_max_l, time_l,sigma_l))
+    print("\t\t\tMid Freq = %f, Expected SNR = %f" % (freq_max_l, SNR_ex_max_l))
+    print("\n")
+
+    # Annotate the Plot
+    ax[0,0].set_title("Matched Filter Output (SNR)")
+    ax[0,1].set_title("Normalized Strain Data (A.U.)")
+    ax[1,0].legend(loc="upper right")
+    ax[3,0].set_xlabel("Time")
+    ax[3,1].set_xlabel("Time from SNR peak")
     plt.show(block=True)
-"""
-#spec,nu=measure_ps(strain,do_win=True,dt=dt,osamp=16)
-#strain_white=noise_filter(strain,np.sqrt(spec),nu,nu_max=1600.,taper=5000)
-
-#th_white=noise_filter(th,np.sqrt(spec),nu,nu_max=1600.,taper=5000)
-#tl_white=noise_filter(tl,np.sqrt(spec),nu,nu_max=1600.,taper=5000)
-
-
-#matched_filt_h=np.fft.irfft(np.fft.rfft(strain_white)*np.conj(np.fft.rfft(th_white)))
-#matched_filt_l=np.fft.irfft(np.fft.rfft(strain_white)*np.conj(np.fft.rfft(tl_white)))
-
-
-
-
-#copied from bash from class
-# strain2=np.append(strain,np.flipud(strain[1:-1]))
-# tobs=len(strain)*dt
-# k_true=np.arange(len(myft))*dnu
-"""
