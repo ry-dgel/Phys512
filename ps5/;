@@ -159,8 +159,6 @@ def conj_step(V,p,res,mask):
 
 def conjgrad(bound,mask,threshold,V=None,plot=True):
     b = rhs(bound,mask)
-    plt.imshow(b)
-    plt.show(block=True)
     if V is None:
         V = 0 * bound
     res = b - Ax(V, mask)
@@ -239,6 +237,9 @@ def scaling_conjgrad(bound,mask,passes,threshold):
     for i in range(1,passes):
         masks.append(deres(masks[i-1]))
         bounds.append(deres(bounds[i-1]))
+    for ms in masks:
+        plt.imshow(ms)
+        plt.show(block=True)
     masks.reverse()
     bounds.reverse()
     print(list(map(lambda x: x.shape,masks)))
@@ -257,10 +258,12 @@ def scaling_conjgrad(bound,mask,passes,threshold):
         plt.pause(0.01)
 
         if i < passes-1:
-            # Upscale potential for next round, want to average with
-            # boundary conditions considered, so use the Vplot which
-            # had these added.
+            # Upscale potential for next round
+            fig, axes = plt.subplots(1,2)
+            axes[0].imshow(Vplot)
             V = upsample(Vplot)
+            axes[1].imshow(V)
+            plt.show(block=True)
     V[mask] = bound[mask]
     return V
 

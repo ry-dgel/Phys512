@@ -150,7 +150,7 @@ for i in range(ns):
     res = rnew
     if not (i%10):
         Vplot = np.copy(V)
-        Vplot[mask] = bound
+        Vplot[mask] = bound[mask]
         plt.clf();
         plot_thing(Vplot)
         plt.pause(0.001)
