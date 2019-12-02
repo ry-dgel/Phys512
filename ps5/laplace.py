@@ -1,10 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage.filters import convolve
-import scipy.ndimage as nd
-from scipy.signal import convolve2d
 from scipy.interpolate import RegularGridInterpolator
-from numba import jit,njit
 plt.style.use("ggplot")
 
 ##############
@@ -17,22 +14,22 @@ n = 512
 # Grid spacing
 d = l/n
 # Conductor radius
-r = 2
+r = 8
 # Ring potential
 Vr = 1
 # Wall potential
 Vw = 0
 # Max Number of Steps
 ns = 5000
-# Threshold: Minimum summed potential change to consider convergence.
+# Threshold for methods
 threshold = 0.01
+
 ##############
 # Boundaries #
 ##############
 # Given dimensions, coarseness and a radius,
 # fills a mask array representing a ring of that radius
 # in the given coarsened space
-#@njit
 def ring(n,d,r,c,mask):
     for i in range(n):
         for j in range(n):
@@ -45,9 +42,21 @@ def disk(n,d,r,c,mask):
     for i in range(n):
         for j in range(n):
             # Fill in points that are within r of the center defined by c.
-            if (i*d - c)**2 + (j*d - c)**2 <= r**2:
+            if (i*d - c[0])**2 + (j*d - c[1])**2 <= r**2:
                 mask[i,j] = True
 
+
+def box(n):
+    bound = np.zeros((n,n))
+    mask = np.zeros((n,n),dtype=bool)
+
+    # Set the wall potential and mask
+    for edge in [mask[0,:],mask[-1,:],mask[:,0],mask[:,-1]]:
+        edge[:] = True
+    for edge in [bound[0,:],bound[-1,:],bound[:,0],bound[:,-1]]:
+        edge[:] = Vw
+
+    return bound,mask
 
 def init(n,d,r,c):
     # The boundary conditions of the problem
@@ -55,7 +64,7 @@ def init(n,d,r,c):
     bound = np.zeros((n,n))
     mask = np.zeros((n,n),dtype=bool)
     # Set the ring potential and mask
-    disk(n,d,r,l/2,mask)
+    disk(n,d,r,c,mask)
     bound[mask] = Vr
     # Set the wall potential and mask
     for edge in [mask[0,:],mask[-1,:],mask[:,0],mask[:,-1]]:
@@ -63,6 +72,15 @@ def init(n,d,r,c):
     for edge in [bound[0,:],bound[-1,:],bound[:,0],bound[:,-1]]:
         edge[:] = Vw
     return bound, mask
+
+####################
+# Part 0 Analytics #
+####################
+def pot():
+    pass
+
+def charge():
+    pass
 
 ##########################
 # Part 1 Simple and Lazy #
@@ -89,6 +107,12 @@ def laplace(pot, d=1):
 # Calculate charge density from potential
 def rho(pot):
     return -laplace(pot)
+
+# Calculate abs value of gradient of potential
+def field(pot):
+    x,y = np.gradient(pot)
+    abs = np.sqrt(x**2+y**2)
+    return abs
 
 # Calculate total charge in and outside of ring
 def in_out(chrg, d, n, r, c):
@@ -125,9 +149,10 @@ def simple_laplace(bound,mask):
             break
     else:
         print("Max Iterations Reached")
-    return V, mask
 
-#bound,mask = init(n,d,r,l/2)
+    return V
+
+#bound,mask = init(n,d,r,[l/2, l/2])
 #V = simple_laplace(bound,mask)
 #chrg = charge(V)
 #inside,outside = in_out(chrg,d,l,n,r,l/2)
@@ -136,9 +161,25 @@ def simple_laplace(bound,mask):
 # Part 2 Conjugate Gradient #
 #############################
 def Ax(pot,mask):
+    pot[mask]=0
     Ax = rho(pot)
     Ax[mask]=0
     return Ax
+
+def Ax2(mat,mask,copy=True):
+    """Write the Laplacian operator in the way we need it to be.  Note that the boundary conditions as specified by the mask
+    do not enter into the matrix since they are on the right-hand side of the matrix equation.  So, set them to zero here, then we won't have
+    to worry about handling them separately."""
+    if copy:
+        mat=mat.copy()
+    mat[mask]=0
+    mm=4*mat
+    mm[:,:-1]=mm[:,:-1]-mat[:,1:]
+    mm[:,1:]=mm[:,1:]-mat[:,:-1]
+    mm[1:,:]=mm[1:,:]-mat[:-1,:]
+    mm[:-1,:]=mm[:-1,:]-mat[1:,:]
+    mm[mask]=0
+    return mm
 
 def rhs(pot,mask):
     pot[np.invert(mask)]=0
@@ -159,12 +200,12 @@ def conj_step(V,p,res,mask):
 
 def conjgrad(bound,mask,threshold,V=None,plot=True):
     b = rhs(bound,mask)
-    plt.imshow(b)
-    plt.show(block=True)
     if V is None:
         V = 0 * bound
     res = b - Ax(V, mask)
     p = res.copy()
+    Vplot = 0 * V
+    i=0 # Keep for returning number of iterations
     for i in range(ns):
         V,p,res = conj_step(V,p,res,mask)
         rtr = np.sum(res*res)
@@ -180,10 +221,11 @@ def conjgrad(bound,mask,threshold,V=None,plot=True):
             break
     else:
         print("Max Iterations Reached")
-    return V
+    V[mask] = bound[mask]
+    return V, i
 
-bound, mask = init(n,d,r,l/2)
-#V = conjgrad(bound, mask, threshold)
+#bound, mask = init(n,d,r,[l/2,l/2])
+#V,_ = conjgrad(bound, mask, threshold)
 #chrg = charge(V)
 #inside,outside = in_out(chrg,d,l,n,r,l/2)
 
@@ -233,7 +275,6 @@ def dnscale(mat,scale=2):
 
 def scaling_conjgrad(bound,mask,passes,threshold):
     # Descale boundary condition and mask
-    descale = int(2**(passes-1))
     masks = [mask]
     bounds = [bound]
     for i in range(1,passes):
@@ -241,31 +282,80 @@ def scaling_conjgrad(bound,mask,passes,threshold):
         bounds.append(deres(bounds[i-1]))
     masks.reverse()
     bounds.reverse()
-    print(list(map(lambda x: x.shape,masks)))
     
-    tol = threshold / descale
+    tol = threshold * 2**(passes-1)
     V = 0*masks[0]
+    total_iters = 0
     for i in range(passes):
+        print("Solving pot with downscale factor: %d" % 2**(passes-i-1))
         bc = bounds[i]
         ms = masks[i]
         # Conjgrad solve V at new scale
-        V = conjgrad(bc,ms,tol,V,plot=True) 
+        V,iters = conjgrad(bc,ms,tol,V,plot=True) 
         Vplot = np.copy(V)
         Vplot[ms] = bc[ms]
-        plt.clf()
-        plot_thing(Vplot)
-        plt.pause(0.01)
-
+        total_iters += iters
         if i < passes-1:
             # Upscale potential for next round, want to average with
             # boundary conditions considered, so use the Vplot which
             # had these added.
             V = upsample(Vplot)
+        tol /= 2
+
     V[mask] = bound[mask]
+    print("Total iterations = %d" % total_iters)
     return V
 
-bound, mask = init(n,d,r,l/2)
-V = scaling_conjgrad(bound,mask,4,threshold)
+bound, mask = init(n,d,r,[l/2,l/2])
+V = scaling_conjgrad(bound,mask,6,threshold)
+#plt.clf()
+#plot_thing(V)
+#plt.pause(1)
+
+###############
+# Part 4 Bump #
+###############
+
+# Initialize the main disk and bump segment
+bound, mask = init(n,d,r,[l/2,l/2])
+bb, mb = init(n,d,r/10,[l/2 - r,l/2])
+# Add bump to main disk
+mask[mb] = mb[mb]
+bound[mb] = bb[mb]
+
+#plt.imshow(bound)
+#plt.pause(1)
+# Run simulation
+#V = scaling_conjgrad(bound,mask,6,threshold)
+#V = scaling_conjgrad(bound,mask,6,threshold)
+#plt.clf()
+#plot_thing(field(V))
+#plt.show(block=True)
+
+###############
+# Part 5 Temp #
+###############
+"""
+bound, mask = box(n)
+tmax = 1
+tstep = 0.01
+Tramp = 10 * tstep
+temp = 0 * bound
+lines = []
+
+# Lazy "Adiabatic"
+for t in range(int(round(tmax/tstep))):
+    bound[0,:] = (t+1) * Tramp
+    temp,_ = conjgrad(bound,mask,threshold,temp,plot=False)
+    line = temp[:,l//2]
+    lines.append(line) 
+    plt.clf()
+    plot_thing(temp)
+    #plt.pause(0.5)
+   
 plt.clf()
-plot_thing(V)
-plt.pause(1)
+plt.figure()
+for line in lines:
+    plt.plot(line)
+plt.show(block=True)
+"""
