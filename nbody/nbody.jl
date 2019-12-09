@@ -4,6 +4,8 @@ using FFTW
 using DSP
 using Printf
 using Statistics: mean
+using Profile
+using DiffEqOperators
 
 const G = 0.1
 
@@ -49,6 +51,13 @@ mutable struct Space
     t::Float64
     dt::Float64
 
+    # Potential Kernel
+    kern::Array{Float64,2}
+
+    # FFT and IFFT operators
+    plan
+    iplan
+
     # The points that inhabit the space
     points::Array{Point,1}
 end
@@ -60,8 +69,7 @@ function Space(dims::Array{Int64,1},
                dt::Float64,
                points::Array{Point,1})
     lims = dims .* dx
-    t = 0.0
-    return Space(dims,dx,bound,lims,rs,t,dt,points)
+    return Space(dims,dx,bound,lims,rs,dt,points)
 end
 
 function Space(lims::Array{Float64,1},
@@ -70,31 +78,45 @@ function Space(lims::Array{Float64,1},
                rs::Float64,
                dt::Float64,
                points::Array{Point,1})
+
     dims = round(Int64,lims ./ dx)
-    t = 0.0
     return Space(dims,dx,bound,lims,rs,t,dt,points)
 end
 
+function Space(dims::Array{Int64,1},
+               dx::Float64,
+               bound::Bool,
+               lims::Array{Float64,1},
+               rs::Float64,
+               dt::Float64,
+               points::Array{Point,1})
+
+    kern = kernel(dims,dx,rs)
+    plan = FFTW.plan_rfft(kern)
+    iplan = FFTW.plan_irfft(plan * kern,dims[1])
+    t = 0.0
+    return Space(dims,dx,bound,lims,rs,t,dt,kern,plan,iplan,points)
+end
+
 # Return an array of each indices position from the center
-function rarray(space::Space)
-    dims = space.dims
+function rarray(dims::Array{Int64,1}, dx::Float64)
     # Initialize output array
     r = zeros(dims...)
     # Want to loop over cartesian indices of the array to generate the r values
     for i in eachindex(CartesianIndices(r))
         # Calculate the center-zeroed distance of each point in the space
-        r[i] = hypot(((Tuple(i) .- dims ./2 .- 0.5).* space.dx)...)
+        r[i] = hypot(((Tuple(i) .- dims ./2 .- 0.5).* dx)...)
     end
     return r
 end
 
-function kernel(space::Space)
+function kernel(dims::Array{Int64,1}, dx::Float64, rs::Float64)
     # Generate output array with r values of space
-    pot = rarray(space)
+    pot = rarray(dims, dx)
     # Soften small values of r
-    pot[pot .< space.rs] .= space.rs
+    pot[pot .< rs] .= rs
     # Calc potential and return
-    return 1 ./ pot
+    return -1 ./ pot
 end
 
 function density(space::Space)
@@ -108,11 +130,12 @@ function density(space::Space)
     return ρ
 end
 
-function potential(space::Space)
-    return conv(density(space), kernel(space))
+function conv(mat::Array{Float64,2}, kernel::Array{Float64,2}, plan, iplan)
+    return iplan*((plan*mat) .* (plan*FFTW.fftshift(kernel)))
 end
-function potential(space::Space, kernel::Array{Float64,2})
-    return conv(density(space), kernel)
+
+function potential(space::Space)
+    return conv(density(space), space.kern, space.plan, space.iplan)
 end
 
 function potE(space::Space, pot::Array{Float64,2})
@@ -167,6 +190,12 @@ function gradient(data::Array{Float64}, dx::Float64)
 end
 
 function updatePoints!(space::Space, force::Array{Array{Float64,2},1})
+    p1 = space.points[1]
+    @show p1.pos
+    dp = p1.v * space.dt
+    @show dp
+    dv = [f[pos2ind(space, p1.pos)...] for f in force]/p1.m * space.dt
+    @show dv
     for point in space.points
         oldpos = point.pos
         # update point velocity
@@ -184,41 +213,46 @@ function randPoints(xlim::Float64, vlim::Float64, N::Int64, mass::Float64)
     return points
 end
 
-function printE(space::Space, pot::Array{Float64,2})
+function calcE(space::Space, pot::Array{Float64,2})
     Ep = potE(space, pot)/length(space.points)
     Ek = mean(kinE.(space.points))
     return Ep, Ek
 end
 
-function evolve(space::Space, tmax::Float64)
-    kern = kernel(space)
-    pot = potential(space, kern)
+function evolve(space::Space, tmax::Float64, genPlots::Bool)
+    pot = potential(space)
     iter = 0
+    #=
     @printf("Iteration %d\n", iter)
     @printf("Energies:\n")
     @printf("\tEk per particle: %f\n", Ek)
     @printf("\tEp per particle: %f\n", Ep)
     @printf("\tTot: %f\n", Ek+Ep)
-
+    =#
     while space.t < tmax
-        iter += 1
-        pot = potential(space, kern)
-        force = -gradient(pot, space.dx)
-        updatePoints!(space, force)
-        space.t += space.dt
-        Ep = potE(space, pot)/length(space.points)
-        Ek = mean(kinE.(space.points))
-        plt = contour(density(space),fill=false)
+        Ep, Ek = calcE(space, pot)
         @printf("Iteration %d\n", iter)
         @printf("Energies:\n")
         @printf("\tEk: %f\n", Ek)
         @printf("\tEp: %f\n", Ep)
         @printf("\tTot: %f\n", Ek+Ep)
-        display(plt)
-        sleep(0.1)
+
+        sleep(0.1)false
+        iter += 1
+        pot = potential(space)
+        force = -gradient(pot, space.dx)
+        updatePoints!(space, force)
+        space.t += space.dt
+        if genPlots
+            plt = contour(density(space),fill=false)
+            display(plt)
+        end
     end
 end
 
 
-space = Space([100,100], 0.05, true, 0.5, 0.01, randPoints(5.0,0.0,50,5.0))
-evolve(space)
+space = Space([50,50], 0.05, true, 0.05, 0.01, randPoints(1.0,0.0,10,5.0))
+evolve(space,0.1, false)
+Profile.clear_malloc_data()
+space = Space([100,100], 0.05, true, 0.05, 0.01, randPoints(5.0,0.0,10000,5.0))
+evolve(space,1.0, false)
