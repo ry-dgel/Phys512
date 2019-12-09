@@ -1,13 +1,19 @@
 # Author: Rigel Zifkin
 using Plots
 using FFTW
-using DSP
 using Printf
 using Statistics: mean
 using Profile
-using DiffEqOperators
+#using DiffEqOperators
 
-const G = 0.1
+dims = [5.0,5.0]
+dx = 5.0/500
+npoints = 500000
+mass = 5.0
+rs = 2*dx
+tmax = 1.0
+dt = 0.01
+const G = 0.001
 
 function ind2pos(space, idx)
     dims = space.dims
@@ -79,8 +85,8 @@ function Space(lims::Array{Float64,1},
                dt::Float64,
                points::Array{Point,1})
 
-    dims = round(Int64,lims ./ dx)
-    return Space(dims,dx,bound,lims,rs,t,dt,points)
+    dims = round.(Int64,lims ./ dx)
+    return Space(dims,dx,bound,lims,rs,dt,points)
 end
 
 function Space(dims::Array{Int64,1},
@@ -123,9 +129,8 @@ function density(space::Space)
     # Generate output array
     ρ = zeros(space.dims...)
     # Loop over points, adding their mass to the corresponding grid point.
-    for point in space.points
-        idx = round.(Int, point.pos ./ space.dx .+ space.dims / 2 .+ 0.5)
-        ρ[idx...] += point.m
+    @simd for point in space.points
+        @inbounds ρ[pos2ind(space, point.pos)...] += point.m
     end
     return ρ
 end
@@ -175,15 +180,15 @@ function gradient(data::Array{Float64}, dx::Float64)
     slice(idx, val) = ndcolon(d,idx,val)
     for i in 1:d
         # First index
-        output[i][slice(i,1)...] .= (data[slice(i,2)...] .-
-                                     data[slice(i,1)...])/dx
+        @views output[i][slice(i,1)...] .= (data[slice(i,2)...] .-
+                                            data[slice(i,1)...])/dx
         # Last index
         li = s[i]
-        output[i][slice(i,li)...] .= (data[slice(i,li)...] .-
-                                      data[slice(i,li-1)...])/dx
+        @views output[i][slice(i,li)...] .=  (data[slice(i,li)...] .-
+                                              data[slice(i,li-1)...])/dx
         for idx in 2:li-1
-            output[i][slice(i,idx)...] .= (data[slice(i,idx+1)...] .-
-                                           data[slice(i,idx-1)...])/(2*dx)
+            @views output[i][slice(i,idx)...] .= (data[slice(i,idx+1)...] .-
+                                                  data[slice(i,idx-1)...])/(2*dx)
         end
     end
     return output
@@ -191,12 +196,12 @@ end
 
 function updatePoints!(space::Space, force::Array{Array{Float64,2},1})
     p1 = space.points[1]
-    @show p1.pos
+    #@show p1.pos
     dp = p1.v * space.dt
-    @show dp
+    #@show dp
     dv = [f[pos2ind(space, p1.pos)...] for f in force]/p1.m * space.dt
-    @show dv
-    for point in space.points
+    #@show dv
+    @simd for point in space.points
         oldpos = point.pos
         # update point velocity
         point.pos .+= point.v * space.dt
@@ -219,16 +224,9 @@ function calcE(space::Space, pot::Array{Float64,2})
     return Ep, Ek
 end
 
-function evolve(space::Space, tmax::Float64, genPlots::Bool)
+function evolve(space::Space, tmax::Float64, genPlots::Int)
     pot = potential(space)
     iter = 0
-    #=
-    @printf("Iteration %d\n", iter)
-    @printf("Energies:\n")
-    @printf("\tEk per particle: %f\n", Ek)
-    @printf("\tEp per particle: %f\n", Ep)
-    @printf("\tTot: %f\n", Ek+Ep)
-    =#
     while space.t < tmax
         Ep, Ek = calcE(space, pot)
         @printf("Iteration %d\n", iter)
@@ -237,22 +235,24 @@ function evolve(space::Space, tmax::Float64, genPlots::Bool)
         @printf("\tEp: %f\n", Ep)
         @printf("\tTot: %f\n", Ek+Ep)
 
-        sleep(0.1)false
         iter += 1
         pot = potential(space)
-        force = -gradient(pot, space.dx)
+        force = -G * gradient(pot, space.dx)
         updatePoints!(space, force)
         space.t += space.dt
-        if genPlots
-            plt = contour(density(space),fill=false)
+        if genPlots > 0 && (iter % genPlots == 0)
+            #plt = contour(density(space),fill=false, levels=25)
+            plt = heatmap(density(space))
             display(plt)
+            #sleep(0.1)
         end
     end
 end
 
-
-space = Space([50,50], 0.05, true, 0.05, 0.01, randPoints(1.0,0.0,10,5.0))
-evolve(space,0.1, false)
-Profile.clear_malloc_data()
-space = Space([100,100], 0.05, true, 0.05, 0.01, randPoints(5.0,0.0,10000,5.0))
-evolve(space,1.0, false)
+#
+#space = Space([50,50], 0.05, true, 0.05, 0.01, randPoints(1.0,0.0,10,5.0))
+#evolve(space,0.1, false)
+#Profile.clear_malloc_data()
+println("Compiling simulation code! First iteration takes a bit to plot due to this.")
+space = Space(dims, dx, true, rs, dt, randPoints(0.8*dims[1],0.0,npoints,mass))
+evolve(space, tmax, 10)
