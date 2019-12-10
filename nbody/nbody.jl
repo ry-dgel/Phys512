@@ -8,12 +8,12 @@ using Profile
 
 dims = [5.0,5.0]
 dx = 5.0/500
-npoints = 500000
+npoints = 50000
 mass = 5.0
 rs = 2*dx
-tmax = 1.0
+tmax = 5.0
 dt = 0.01
-const G = 0.001
+const G = 0.0001
 
 function ind2pos(space, idx)
     dims = space.dims
@@ -195,12 +195,6 @@ function gradient(data::Array{Float64}, dx::Float64)
 end
 
 function updatePoints!(space::Space, force::Array{Array{Float64,2},1})
-    p1 = space.points[1]
-    #@show p1.pos
-    dp = p1.v * space.dt
-    #@show dp
-    dv = [f[pos2ind(space, p1.pos)...] for f in force]/p1.m * space.dt
-    #@show dv
     @simd for point in space.points
         oldpos = point.pos
         # update point velocity
@@ -241,8 +235,14 @@ function evolve(space::Space, tmax::Float64, genPlots::Int)
         updatePoints!(space, force)
         space.t += space.dt
         if genPlots > 0 && (iter % genPlots == 0)
-            #plt = contour(density(space),fill=false, levels=25)
-            plt = heatmap(density(space))
+            idxs = collect(1:25:500)
+            xs = repeat(idxs,length(idxs),1)
+            ys = reshape(repeat(idxs,1,length(idxs))',length(idxs)^2,1)
+            u = [force[1][x,y] for x in idxs for y in idxs]
+            v = [force[2][x,y] for x in idxs for y in idxs]
+            plt = quiver(xs,ys,quiver=(u,v))
+            #plt = heatmap(force[2])
+            #plt = heatmap(density(space))
             display(plt)
             #sleep(0.1)
         end
@@ -254,5 +254,5 @@ end
 #evolve(space,0.1, false)
 #Profile.clear_malloc_data()
 println("Compiling simulation code! First iteration takes a bit to plot due to this.")
-space = Space(dims, dx, true, rs, dt, randPoints(0.8*dims[1],0.0,npoints,mass))
+space = Space(dims, dx, true, rs, dt, randPoints(1.0*dims[1],0.0,npoints,mass))
 evolve(space, tmax, 10)
