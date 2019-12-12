@@ -13,7 +13,7 @@ mass = 5.0
 rs = 2*dx
 tmax = 5.0
 dt = 0.01
-const G = 0.0001
+const G = 0.001
 
 function ind2pos(space, idx)
     dims = space.dims
@@ -194,6 +194,7 @@ function gradient(data::Array{Float64}, dx::Float64)
     return output
 end
 
+#= 'Euler' method of update, not great
 function updatePoints!(space::Space, force::Array{Array{Float64,2},1})
     @simd for point in space.points
         oldpos = point.pos
@@ -203,6 +204,23 @@ function updatePoints!(space::Space, force::Array{Array{Float64,2},1})
         point.pos .-= round.(point.pos ./ (space.lims)) .* space.lims
         # update point position
         point.v .+= [f[pos2ind(space, oldpos)...] for f in force]/point.m * space.dt
+    end
+end
+=#
+
+# Heun's method, much better!#
+function updatePoints!(space::Space, force::Array{Array{Float64,2},1})
+    @simd for point in space.points
+        acc = [f[pos2ind(space, point.pos)...] for f in force]/point.m
+        newpos = point.pos + space.dt .* point.v
+        newpos .-= round.(newpos ./ (space.lims)) .* space.lims
+        acc2 = [f[pos2ind(space, newpos)...] for f in force]/point.m
+        # update point position
+        point.pos .+= (point.v + space.dt * (acc/3 + acc2/6)) * space.dt
+        # Update point velocity
+        point.v .+= (acc + acc2) * space.dt / 2
+        # Periodic Boundary Condition:
+        point.pos .-= round.(point.pos ./ (space.lims)) .* space.lims
     end
 end
 
@@ -235,24 +253,25 @@ function evolve(space::Space, tmax::Float64, genPlots::Int)
         updatePoints!(space, force)
         space.t += space.dt
         if genPlots > 0 && (iter % genPlots == 0)
-            idxs = collect(1:25:500)
-            xs = repeat(idxs,length(idxs),1)
-            ys = reshape(repeat(idxs,1,length(idxs))',length(idxs)^2,1)
-            u = [force[1][x,y] for x in idxs for y in idxs]
-            v = [force[2][x,y] for x in idxs for y in idxs]
-            plt = quiver(xs,ys,quiver=(u,v))
+            #idxs = collect(1:25:500)
+            #xs = repeat(idxs,length(idxs),1)
+            #ys = reshape(repeat(idxs,1,length(idxs))',length(idxs)^2,1)
+            #u = [force[1][x,y] for x in idxs for y in idxs]
+            #v = [force[2][x,y] for x in idxs for y in idxs]
+            #plt = quiver(xs,ys,quiver=(u,v))
             #plt = heatmap(force[2])
-            #plt = heatmap(density(space))
+            plt = heatmap(density(space))
             display(plt)
             #sleep(0.1)
         end
     end
 end
 
-#
 #space = Space([50,50], 0.05, true, 0.05, 0.01, randPoints(1.0,0.0,10,5.0))
 #evolve(space,0.1, false)
 #Profile.clear_malloc_data()
 println("Compiling simulation code! First iteration takes a bit to plot due to this.")
-space = Space(dims, dx, true, rs, dt, randPoints(1.0*dims[1],0.0,npoints,mass))
+#space = Space(dims, dx, true, rs, dt, randPoints(1.0*dims[1],0.0,npoints,mass))
+#space = Space([100,100],1/100,true,rs,dt,[Point(1,[0,0],[0,0])])
+space = Space([100,100],1/100,true,rs,dt,[Point(1,[0.05,0],[0,0.1]), Point(1,[-0.05,0],[0,-0.1])])
 evolve(space, tmax, 10)
